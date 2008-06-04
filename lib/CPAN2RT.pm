@@ -1,10 +1,24 @@
 package CPAN2RT;
 
+=head1 NAME
+
+CPAN2RT - CPAN to RT converter for rt.cpan.org service
+
+=head1 DESCRIPTION
+
+An utility and module with functions to import and update metadata
+about CPAN distributions into RT DB using files available from each
+CPAN mirror.
+
+Comes with `cpan2rt` script.
+
+=cut
+
 use v5.8.3;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Email::Address;
 use List::Compare;

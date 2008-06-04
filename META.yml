@@ -1,5 +1,5 @@
 ---
-abstract: ~
+abstract: 'CPAN to RT converter for rt.cpan.org service'
 author:
   - 'Ruslan Zakirov <ruz@bestpractical.com>'
 distribution_type: module
@@ -21,4 +21,4 @@ requires:
   List::Compare: 0
   List::MoreUtils: 0
   perl: 5.8.3
-version: 0.01
+version: 0.02
