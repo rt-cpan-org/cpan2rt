@@ -178,7 +178,7 @@ sub _permissions {
 
         my ($module, $cpanid, $permission) = (split /\s*,\s*/, $str);
         unless ( $module && $cpanid ) {
-            debug { "couldn't parse '$str'\n" };
+            debug { "couldn't parse '$str' from '$file'\n" };
             next;
         }
         $res{ $module } ||= [];
@@ -387,10 +387,12 @@ sub set_maintainers {
 
     my $set = List::Compare->new( '--unsorted', \@current, \@maints );
     foreach ( $set->get_unique ) {
+        debug { "Going to delete $_ from maintainers of ". $queue->Name };
         my ($status, @msg) = $self->del_maintainer( $queue, $_, 'force' );
         push @errors, @msg unless $status;
     }
     foreach ( $set->get_complement ) {
+        debug { "Going to add $_ as maintainer of ". $queue->Name };
         my ($status, @msg) = $self->add_maintainer( $queue, $_, 'force' );
         push @errors, @msg unless $status;
     }
@@ -418,7 +420,7 @@ sub add_maintainer {
     }
 
     if ( !$force && $queue->IsAdminCc( $user->PrincipalId ) ) {
-        debug {  $user->Name ." is allready maintainer of '". $queue->Name ."'\n"  };
+        debug {  $user->Name ." is already maintainer of '". $queue->Name ."'\n"  };
         return (1);
     }
 
@@ -467,7 +469,7 @@ sub del_maintainer {
             ." from AdminCc list of '". $queue->Name ."': $msg\n";
         return (undef, $msg);
     } else {
-        debug { "Delete ". $user->Name ." from maintainers of '". $queue->Name ."'\n" };
+        debug { "Deleted ". $user->Name ." from maintainers of '". $queue->Name ."'\n" };
     }
     return (1);
 }
@@ -554,7 +556,9 @@ sub load_or_create_user {
             debug { "Merging user @{[$new->Name]} into @{[$byemail->Name]}...\n" };
             $new->MergeInto( $byemail );
         } else {
-            debug { "WARNING: Couldn't merge users. Extension is not installed.\n" };
+            debug {
+                "WARNING: Couldn't merge user @{[$new->Name]} into @{[$byemail->Name]}."
+                ." Extension is not installed.\n" };
         }
         return ($new);
     }
@@ -603,9 +607,9 @@ sub load_or_create_queue {
         unless ( $status ) {
             return (undef, "Couldn't create queue '$dist': $msg\n");
         }
-		debug { "Created queue for dist ". $queue->Name ." #". $queue->id ."\n" };
+		debug { "Created queue #". $queue->id ." for dist ". $queue->Name ."\n" };
     } else {
-		debug { "Found queue for dist ". $queue->Name ." #". $queue->id ."\n" };
+		debug { "Found queue #". $queue->id ." for dist ". $queue->Name ."\n" };
     }
     return $queue;
 }
