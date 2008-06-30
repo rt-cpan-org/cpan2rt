@@ -86,6 +86,7 @@ sub sync_files {
     debug { "Syncing files from '$mirror'\n" };
 
     my @files = qw(
+        indices/find-ls.gz
         authors/01mailrc.txt.gz
         modules/06perms.txt.gz
         modules/02packages.details.txt.gz
@@ -214,6 +215,46 @@ sub _module2file {
             next;
         }
         $res{ $module } = $file;
+    }
+    close $fh;
+
+    return \%res;
+}
+
+
+{ my $cache;
+sub all_distributions {
+    my $self = shift;
+    $cache = $self->_all_distributions() unless $cache;
+    return $cache;
+} }
+
+sub _all_distributions {
+    my $self = shift;
+    my $file = 'find-ls';
+    debug { "Parsing $file...\n" };
+    my $path = $self->file_path( $file );
+    open my $fh, "<:utf8", $path or die "Couldn't open '$path': $!";
+
+    my %res;
+    while ( my $str = <$fh> ) {
+        next if $str =~ /^\d+\s+0\s+l\s+1/; # skip symbolic links
+        chomp $str;
+
+        my ($mode, $file) = (split /\s+/, $str)[2, -1];
+        next if index($mode, 'x') >= 0; # skip executables (dirs)
+        # we're only interested in files in authors/id/ dir
+        next unless index($file, "authors/id/") == 0;
+        next unless $file =~ /\.(bz2|zip|tgz|tar\.gz)$/i;
+
+        my $info = CPAN::DistnameInfo->new( $file );
+        my $dist = $info->dist;
+        unless ( $dist ) {
+            debug { "Couldn't parse distribution name from '$file'\n" };
+            next;
+        }
+        push @{ $res{ $dist }{'versions'} ||= [] }, $info->version;
+        push @{ $res{ $dist }{'uploaders'} ||= [] }, $info->cpanid;
     }
     close $fh;
 
