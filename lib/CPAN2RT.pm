@@ -28,12 +28,42 @@ use List::MoreUtils qw(uniq);
 our $DEBUG = 0;
 sub debug(&);
 
+=head1 METHODS
+
+=head2 new
+
+Simple constructor that creates a hash based object and stores all
+passed arguments inside it. Then L</init> is called.
+
+=head3 options
+
+=over 8
+
+=item home - RT home dir, RTHOME is checked if empty and defaults to
+"/opt/rt3".
+
+=item debug - turn on ddebug output to STDERR.
+
+=item mirror - CPAN mirror to fetch files from.
+
+=back
+
+=cut
+
 sub new {
     my $proto = shift;
     my $self = bless { @_ }, ref($proto) || $proto;
     $self->init();
     return $self;
 }
+
+=head2 init
+
+Called right after constructor, changes @INC, loads RT and initilize it.
+
+See options in description of L</new>.
+
+=cut
 
 sub init {
     my $self = shift;
