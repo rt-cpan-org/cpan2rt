@@ -288,6 +288,7 @@ sub sync_distributions {
     }
 
     my @files = uniq values %{ $self->module2file };
+    my $all_dists = $self->all_distributions;
 
     my %tmp;
     foreach my $file ( @files ) {
@@ -306,6 +307,7 @@ sub sync_distributions {
         if ( my $v = $info->version ) {
             push @{ $tmp{ $dist } }, $v;
         }
+        push @{ $tmp{ $dist } }, @{ $all_dists->{ $dist }{'versions'} || [] };
     }
 
     my @errors;
@@ -478,6 +480,7 @@ sub del_maintainer {
 sub add_versions {
     my $self = shift;
     my ($queue, @versions) = @_;
+    @versions = uniq @versions;
 
     my @errors;
     foreach my $name ( "Broken in", "Fixed in" ) {
