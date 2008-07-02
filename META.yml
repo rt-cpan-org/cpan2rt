@@ -13,12 +13,13 @@ no_index:
   directory:
     - inc
 requires:
-  CPAN::DistnameInfo: 0
+  CPAN::DistnameInfo: 0.07
   Email::Address: 0
   File::Spec: 0
   HTTP::Date: 0
   LWP::UserAgent: 0
   List::Compare: 0
   List::MoreUtils: 0
+  XML::SAX: 0
   perl: 5.8.3
 version: 0.02
