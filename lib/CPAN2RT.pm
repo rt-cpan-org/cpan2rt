@@ -18,7 +18,7 @@ use v5.8.3;
 use strict;
 use warnings;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use Email::Address;
 use List::Compare;
