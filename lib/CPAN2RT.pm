@@ -87,7 +87,7 @@ sub sync_files {
 
     my @files = qw(
         indices/find-ls.gz
-        authors/01mailrc.txt.gz
+        authors/00whois.xml
         modules/06perms.txt.gz
         modules/02packages.details.txt.gz
     );
@@ -134,26 +134,19 @@ sub authors {
 
 sub _authors {
     my $self = shift;
-    my $file = '01mailrc.txt';
+    my $file = '00whois.xml';
     debug { "Parsing $file...\n" };
     my $path = $self->file_path( $file );
-    open my $fh, "<:utf8", $path or die "Couldn't open '$path': $!";
 
-    my %res;
-    while ( my $str = <$fh> ) {
-        chomp $str;
-        my ($cpanid, $real_name, $email) = ($str =~ m{^alias\s+([A-Z0-9]+)\s+"([^<>]*?)\s*<([^>]+)>"$});
-        unless ( $cpanid ) {
-            debug { "couldn't parse '$str'\n" };
-            next;
-        }
-        $res{ $cpanid } = {
-            real_name => $real_name,
-            email_address => $self->parse_email_address($email) || $cpanid .'@cpan.org',
-        };
-    }
+    use XML::SAX::ParserFactory;
+    my $handler = CPAN2RT::UsersSAXParser->new();
+    my $p = XML::SAX::ParserFactory->parser(Handler => $handler);
+
+    open my $fh, "<:raw", $path or die "Couldn't open '$path': $!";
+    my $res = $p->parse_file( $fh );
     close $fh;
-    return \%res;
+
+    return $res;
 }
 
 { my $cache;
@@ -272,7 +265,7 @@ sub sync_authors {
     my @errors;
     my $authors = $self->authors;
     while ( my ($cpanid, $meta) = each %$authors ) {
-        my ($user, @msg) = $self->load_or_create_user( $cpanid, @{ $meta }{qw(real_name email_address)} );
+        my ($user, @msg) = $self->load_or_create_user( $cpanid, @{ $meta }{qw(fullname email)} );
         push @errors, @msg unless $user;
     }
     return (undef, @errors) if @errors;
@@ -379,10 +372,17 @@ sub current_maintainers {
     return map uc $_->Name, @{ $users->ItemsArrayRef };
 }
 
+sub filter_maintainers {
+    my $self = shift;
+    my $authors = $self->authors;
+    return grep { ($authors->{$_}{'type'}||'') eq 'author' } @_;
+}
+
 sub set_maintainers {
     my $self = shift;
     my $queue   = shift;
-    my @maints  = @_;
+
+    my @maints  = $self->filter_maintainers( @_ );
     my @current = $self->current_maintainers( $queue );
 
     my @errors;
@@ -475,7 +475,6 @@ sub del_maintainer {
     }
     return (1);
 }
-
 
 sub add_versions {
     my $self = shift;
@@ -732,6 +731,55 @@ sub skip_header {
 sub debug(&) {
     return unless $DEBUG;
     print STDERR map { /\n$/? $_ : $_."\n" } $_[0]->();
+}
+
+1;
+
+package CPAN2RT::UsersSAXParser;
+use base qw(XML::SAX::Base);
+
+sub start_document {
+    my ($self, $doc) = @_;
+    $self->{'res'} = {};
+}
+
+sub start_element {
+    my ($self, $el) = @_;
+    my $name = $el->{LocalName};
+    return if $name ne 'cpanid' && !$self->{inside};
+
+    if ( $name eq 'cpanid' ) {
+        $self->{inside} = 1;
+        $self->{tmp} = [];
+        return;
+    } else {
+        $self->{inside_prop} = 1;
+    }
+
+    push @{ $self->{'tmp'} }, $name, '';
+}
+
+sub characters {
+    my ($self, $el) = @_;
+    $self->{'tmp'}[-1] .= $el->{Data} if $self->{inside_prop};
+}
+
+sub end_element {
+    my ($self, $el) = @_;
+    $self->{inside_prop} = 0;
+
+    my $name = $el->{LocalName};
+
+    if ( $name eq 'cpanid' ) {
+        $self->{inside} = 0;
+        my %rec = map Encode::decode_utf8($_), @{ delete $self->{'tmp'} };
+        $self->{'res'}{ delete $rec{'id'} } = \%rec;
+    }
+}
+
+sub end_document {
+    my ($self) = @_;
+    return $self->{'res'};
 }
 
 1;
