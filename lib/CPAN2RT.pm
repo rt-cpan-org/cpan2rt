@@ -92,37 +92,51 @@ sub sync_files {
         modules/02packages.details.txt.gz
     );
 
+    foreach my $file ( @files ) {
+        $self->fetch_file( $mirror, $file );
+    }
+}
+
+sub fetch_file {
+    my $self = shift;
+    my $mirror = shift;
+    my $file = shift;
+    my $tries = shift || 3;
+
     require LWP::UserAgent;
     my $ua = new LWP::UserAgent;
     $ua->timeout( 10 );
 
-    foreach my $file ( @files ) {
-        debug { "Fetching '$file'\n" };
-        my $store = $self->file_path( $file );
-        $self->backup_file( $store ) if -e $store;
-        my $response = $ua->get( "$mirror/$file", ':content_file' => $store );
-        unless ( $response->is_success ) {
-            print STDERR $response->status_line, "\n";
-            next;
-        }
-        my $mtime = $response->header('Last-Modified');
+    my $store = $self->file_path( $file );
+    $self->backup_file( $store );
+    my $url = "$mirror/$file";
 
-        debug { "Fetched '$file' -> '$store'\n" };
+    debug { "Fetching '$file' from '$url'\n" };
+    my $response = $ua->get( $url, ':content_file' => $store );
+    unless ( $response->is_success ) {
+        print STDERR "Request to '$url' failed. Server response:\n". $response->status_line ."\n";
+        return $self->fetch_file( $mirror, $file, $tries) if --$tries;
 
-        if ( $store =~ /(.*)\.gz$/ ) {
-            $self->backup_file( $1 );
-            `gunzip -f $store`;
-            $store =~ s/\.gz$//;
-            debug { "Unzipped '$store'\n" };
-        }
-
-        if ( $mtime ) {
-            require HTTP::Date;
-            $mtime = HTTP::Date::str2time( $mtime );
-            utime $mtime, $mtime, $store if $mtime;
-            debug { "Last modified: $mtime\n" };
-        }
+        print STDERR "Failed several attempts to fetch '$url'\n";
+        return undef;
     }
+    debug { "Fetched '$file' -> '$store'\n" };
+
+    if ( $store =~ /(.*)\.gz$/ ) {
+        $self->backup_file( $1 );
+        `gunzip -f $store`;
+        $store =~ s/\.gz$//;
+        debug { "Unzipped '$store'\n" };
+    }
+
+    my $mtime = $response->header('Last-Modified');
+    if ( $mtime ) {
+        require HTTP::Date;
+        $mtime = HTTP::Date::str2time( $mtime );
+        utime $mtime, $mtime, $store if $mtime;
+        debug { "Last modified: $mtime\n" };
+    }
+    return 1;
 }
 
 { my $cache;
@@ -717,7 +731,7 @@ sub backup_file {
     my $self = shift;
     my $old = shift;
     my $new = $old .'.old';
-    rename $old, $new;
+    rename $old, $new if -e $old;
 }
 
 sub skip_header {
