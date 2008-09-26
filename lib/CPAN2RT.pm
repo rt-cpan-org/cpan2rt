@@ -72,11 +72,16 @@ sub init {
     unshift @INC, File::Spec->catdir( $home, 'lib' );
     unshift @INC, File::Spec->catdir( $home, 'local', 'lib' );
 
+    $DEBUG = $self->{'debug'};
+
     require RT;
     RT::LoadConfig();
+    if ( $DEBUG ) {
+        $RT::LogToScreen = 'debug';
+    } else {
+        $RT::LogToScreen = 'warning';
+    }
     RT::Init();
-
-    $DEBUG = $self->{'debug'};
 }
 
 sub sync_files {
