@@ -493,7 +493,7 @@ sub del_maintainer {
 sub add_versions {
     my $self = shift;
     my ($queue, @versions) = @_;
-    @versions = uniq @versions;
+    @versions = uniq grep defined && length, @versions;
 
     my @errors;
     foreach my $name ( "Broken in", "Fixed in" ) {
@@ -505,7 +505,7 @@ sub add_versions {
 
         # Unless it's a new value, don't add it
         my %old = map { $_->Name => 1 } @{ $cf->Values->ItemsArrayRef };
-        foreach my $version ( grep defined && length, @versions ) {
+        foreach my $version ( @versions ) {
             if ( exists $old{$version} ) {
                 debug { "Version '$version' exists (not adding)\n" };
                 next;
