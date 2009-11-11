@@ -628,9 +628,9 @@ sub load_or_create_queue {
         unless ( $status ) {
             return (undef, "Couldn't create queue '$dist': $msg\n");
         }
-		debug { "Created queue #". $queue->id ." for dist ". $queue->Name ."\n" };
+        debug { "Created queue #". $queue->id ." for dist ". $queue->Name ."\n" };
     } else {
-		debug { "Found queue #". $queue->id ." for dist ". $queue->Name ."\n" };
+        debug { "Found queue #". $queue->id ." for dist ". $queue->Name ."\n" };
     }
     return $queue;
 }
