@@ -87,6 +87,7 @@ sub cmd_update {
     $importer->sync_files( $opt{'mirror'} ) if $opt{'sync'};
     $importer->sync_authors( $opt{'force'} );
     $importer->sync_distributions( $opt{'force'} );
+    $importer->sync_versions( $opt{'force'} );
     $importer->sync_maintainers( $opt{'force'} );
 }
 
