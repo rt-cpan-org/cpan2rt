@@ -210,6 +210,16 @@ sub module2file {
 
 sub _module2file {
     my $self = shift;
+
+    my %res;
+    $self->for_mapped_distributions( sub { $res{ $_[0] } = $_[2] } );
+    return \%res;
+}
+
+sub for_mapped_distributions {
+    my $self = shift;
+    my $callback = shift;
+
     my $file = '02packages.details.txt';
     debug { "Parsing $file...\n" };
     my $path = $self->file_path( $file );
@@ -217,38 +227,28 @@ sub _module2file {
 
     $self->skip_header( $fh );
 
-    my %res;
     while ( my $str = <$fh> ) {
         chomp $str;
 
         my ($module, $mver, $file) = split /\s+/, $str;
         unless ( $module && $file ) {
-            debug { "couldn't parse '$str'\n" };
+            debug { "couldn't parse '$str' in '$file'" };
             next;
         }
-        $res{ $module } = $file;
+        $callback->( $module, $mver, $file );
     }
     close $fh;
-
-    return \%res;
 }
 
-
-{ my $cache;
-sub all_distributions {
+sub for_all_distributions {
     my $self = shift;
-    $cache = $self->_all_distributions() unless $cache;
-    return $cache;
-} }
+    my $callback = shift;
 
-sub _all_distributions {
-    my $self = shift;
     my $file = 'find-ls';
     debug { "Parsing $file...\n" };
     my $path = $self->file_path( $file );
     open my $fh, "<:utf8", $path or die "Couldn't open '$path': $!";
 
-    my %res;
     while ( my $str = <$fh> ) {
         next if $str =~ /^\d+\s+0\s+l\s+1/; # skip symbolic links
         chomp $str;
@@ -259,18 +259,12 @@ sub _all_distributions {
         next unless index($file, "authors/id/") == 0;
         next unless $file =~ /\.(bz2|zip|tgz|tar\.gz)$/i;
 
-        my $info = CPAN::DistnameInfo->new( $file );
-        my $dist = $info->dist;
-        unless ( $dist ) {
-            debug { "Couldn't parse distribution name from '$file'\n" };
-            next;
-        }
-        push @{ $res{ $dist }{'versions'} ||= [] }, $info->version;
-        push @{ $res{ $dist }{'uploaders'} ||= [] }, $info->cpanid;
+        my $info = $self->file2distinfo( $file )
+            or next;
+
+        $callback->( $info );
     }
     close $fh;
-
-    return \%res;
 }
 
 sub sync_authors {
@@ -281,11 +275,13 @@ sub sync_authors {
         return (1);
     }
 
-    my @errors;
+    my ($i, @errors) = (0);
     my $authors = $self->authors;
     while ( my ($cpanid, $meta) = each %$authors ) {
         my ($user, @msg) = $self->load_or_create_user( $cpanid, @{ $meta }{qw(fullname email)} );
         push @errors, @msg unless $user;
+
+        DBIx::SearchBuilder::Record::Cachable->FlushCache unless ++$i % 100;
     }
     return (undef, @errors) if @errors;
     return (1);
@@ -299,43 +295,71 @@ sub sync_distributions {
         return (1);
     }
 
-    my @files = uniq values %{ $self->module2file };
-    my $all_dists = $self->all_distributions;
-
-    my %tmp;
-    foreach my $file ( @files ) {
-        my $info = CPAN::DistnameInfo->new( "authors/id/$file" );
-        my $dist = $info->dist;
-        unless ( $dist ) {
-            debug { "Couldn't parse distribution name from '$file'\n" };
-            next;
-        }
-        if ( $dist =~ /^(parrot|perl)$/i ) {
-            debug { "Skipping $dist as it's hard coded to be skipped." };
-            next;
-        }
-
-        $tmp{ $dist } ||= [];
-        if ( my $v = $info->version ) {
-            push @{ $tmp{ $dist } }, $v;
-        }
-        push @{ $tmp{ $dist } }, @{ $all_dists->{ $dist }{'versions'} || [] };
-    }
-
     my @errors;
-    while ( my ($dist, $versions) = each %tmp ) {
-        my ($queue, @msg) = $self->load_or_create_queue( $dist );
-        unless ( $queue ) {
-            push @errors, @msg;
-            next;
-        }
-        if ( $versions && @$versions ) {
-            my ($status, @msg) = $self->add_versions( $queue, @$versions );
-            push @errors, @msg unless $status;
-        }
+
+    my $last = ''; my $i = 0;
+    my $syncer = sub {
+        my $file = $_[2];
+        return if $last eq $file;
+
+        $last = $file;
+
+        my $info = $self->file2distinfo( "authors/id/$file" )
+            or return;
+
+        my ($queue, @msg) = $self->load_or_create_queue( $info->dist );
+        push @errors, @msg unless $queue;
+
+        # we don't sync version here as sync_versions does this better
+
+        DBIx::SearchBuilder::Record::Cachable->FlushCache unless ++$i % 100;
+    };
+    $self->for_mapped_distributions( $syncer );
+
+    return (undef, @errors) if @errors;
+    return (1);
+}
+
+sub sync_versions {
+    my $self = shift;
+    my $force = shift;
+    if ( !$force && !$self->is_new_file( '02packages.details.txt' ) ) {
+        debug { "Skip syncing, file's not changed\n" };
+        return (1);
     }
 
-    %tmp = ();
+    my $i = 0;
+    my @errors;
+    my ($last_dist, @last_versions) = ('');
+    my $syncer = sub {
+        return unless $last_dist && @last_versions;
+
+        my $queue = $self->load_queue( $last_dist );
+        unless ( $queue ) {
+            debug { "No queue for dist '$last_dist'" };
+            return;
+        }
+
+        my ($status, @msg) = $self->add_versions( $queue, @last_versions );
+        push @errors, @msg unless $status;
+
+        DBIx::SearchBuilder::Record::Cachable->FlushCache unless ++$i % 100;
+    };
+    my $collector = sub {
+        my $info = shift;
+
+        my $dist = $info->dist;
+        if ( $dist ne $last_dist ) {
+            $syncer->();
+            $last_dist = $dist;
+            @last_versions = ();
+        }
+
+        push @last_versions, $info->version;
+    };
+
+    $self->for_all_distributions( $collector );
+    $syncer->(); # last portion
 
     return (undef, @errors) if @errors;
     return (1);
@@ -357,14 +381,13 @@ sub sync_maintainers {
         my $file = $m2f->{ $module };
         next unless $file;
 
-        my $dist = CPAN::DistnameInfo->new( "authors/id/$file" )->dist;
-        unless ( $dist ) {
-            debug { "Couldn't parse distribution name from '$file'\n" };
-            next;
-        }
-        push @{ $res{ $dist } ||= [] }, @$maint;
+        my $info = $self->file2distinfo( "authors/id/$file" )
+            or next;
+
+        push @{ $res{ $info->dist } ||= [] }, @$maint;
     }
 
+    my $i = 0;
     my @errors = ();
     while ( my ($dist, $maint) = each %res ) {
         my ($queue, @msg) = $self->load_or_create_queue( $dist );
@@ -376,6 +399,8 @@ sub sync_maintainers {
         my $status;
         ($status, @msg) = $self->set_maintainers( $queue, @$maint );
         push @errors, @msg unless $status;
+
+        DBIx::SearchBuilder::Record::Cachable->FlushCache unless ++$i % 100;
     }
     %res = ();
     return (undef, @errors) if @errors;
@@ -611,27 +636,36 @@ sub create_user {
     return ($user)
 }
 
-sub load_or_create_queue {
+sub load_queue {
     my $self = shift;
     my $dist = shift;
 
     my $queue = RT::Queue->new( $RT::SystemUser );
-    # Try to load up the current queue by name.  Avoids duplication.
     $queue->Load( $dist );
-    unless ( $queue->id ) {
-        my ($status, $msg) = $queue->Create(
-            Name               => $dist,
-            Description        => "Bugs in $dist",
-            CorrespondAddress  => "bug-$dist\@rt.cpan.org",
-            CommentAddress     => "comment-$dist\@rt.cpan.org",
-        );
-        unless ( $status ) {
-            return (undef, "Couldn't create queue '$dist': $msg\n");
-        }
-        debug { "Created queue #". $queue->id ." for dist ". $queue->Name ."\n" };
-    } else {
-        debug { "Found queue #". $queue->id ." for dist ". $queue->Name ."\n" };
+    return undef unless $queue->id;
+
+    debug { "Found queue #". $queue->id ." for dist ". $queue->Name ."\n" };
+    return $queue;
+}
+
+sub load_or_create_queue {
+    my $self = shift;
+    my $dist = shift;
+
+    my $queue = $self->load_queue( $dist );
+    return $queue if $queue;
+
+    $queue = RT::Queue->new( $RT::SystemUser );
+    my ($status, $msg) = $queue->Create(
+        Name               => $dist,
+        Description        => "Bugs in $dist",
+        CorrespondAddress  => "bug-$dist\@rt.cpan.org",
+        CommentAddress     => "comment-$dist\@rt.cpan.org",
+    );
+    unless ( $status ) {
+        return (undef, "Couldn't create queue '$dist': $msg\n");
     }
+    debug { "Created queue #". $queue->id ." for dist ". $queue->Name ."\n" };
     return $queue;
 }
 
@@ -710,6 +744,23 @@ sub parse_email_address {
     my $address = (grep defined, Email::Address->parse( $string || '' ))[0];
     return undef unless defined $address;
     return $address->address;
+}
+
+sub file2distinfo {
+    my $self = shift;
+    my $file = shift or return undef;
+
+    my $info = CPAN::DistnameInfo->new( $file );
+    my $dist = $info->dist;
+    unless ( $dist ) {
+        debug { "Couldn't parse distribution name from '$file'\n" };
+        return undef;
+    }
+    if ( $dist =~ /^(parrot|perl)$/i ) {
+        debug { "Skipping $dist as it's hard coded to be skipped." };
+        return undef;
+    }
+    return $info;
 }
 
 sub file_path {
