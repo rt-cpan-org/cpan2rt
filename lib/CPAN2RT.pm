@@ -569,53 +569,114 @@ sub add_versions {
 
 sub load_or_create_user {
     my $self = shift;
-    my ($cpanid, $realname, $email) = @_;
+    my ($cpanid, $realname, $public_email) = @_;
+
+    my $user = $self->load_and_fix_user( $cpanid, $public_email);
+    if ( $user ) {
+        if ( $realname && $realname ne ($user->RealName||'') ) {
+            my ($status, $msg) = $user->SetRealName( $realname );
+            $RT::Logger->warning("Couldn't set ${cpanid}'s real name: $msg")
+                unless $status;
+        }
+
+        return $user;
+    }
+    return $self->create_user($cpanid, $realname, $cpanid .'@cpan.org');
+}
+
+sub load_and_fix_user {
+    my $self = shift;
+    my ($cpanid, $public_email) = @_;
+
+    # WARNING: We can not trust public email addresses people publish
+    # on PAUSE. They are not validated in any way! That's it.
+
+    my $cpan_email = $cpanid .'@cpan.org';
+
+    # quick test for case when Name and Email are cosher in one record
+    {
+        my $tmp = RT::User->new( $RT::SystemUser );
+        $tmp->LoadByCols( Name => $cpanid, EmailAddress => $cpan_email );
+        if ( $tmp->id ) {
+            $RT::Logger->debug(
+                "User record with name '$cpanid'"
+                ." and email '$cpan_email' exists."
+            );
+            return $tmp;
+        }
+    }
 
     my $bycpanid = RT::User->new($RT::SystemUser);
-    $bycpanid->LoadByCol( Name => $cpanid );
+    $bycpanid->LoadByCols( Name => $cpanid );
 
-    # WARNING: when MergeUser extension is used then the same user records
-    # will be loaded even when there are multiple records in the DB
-    $email = $self->parse_email_address( $email ) || "$cpanid\@cpan.org";
     my $byemail = RT::User->new( $RT::SystemUser );
-    $byemail->LoadByEmail( $email );
+    $byemail->LoadByEmail( $cpan_email );
 
-    if ( $bycpanid->id && (($byemail->id && $bycpanid->id == $byemail->id) || !$byemail->id) ) {
-        # the same users, both cpanid and email...
-        # or email change, so no user with new email...
-        #
-        # XXX: as we have no way to detect email changes on PAUSE
-        # then we set email to the public version from PAUSE only when
-        # user in RT has no email. The same applies to name.
-        $bycpanid->SetEmailAddress( $email )
-            unless $bycpanid->EmailAddress;
-        $bycpanid->SetRealName( $realname )
-            unless $bycpanid->RealName;
-        return $bycpanid;
-    }
-    elsif ( $bycpanid->id && $byemail->id ) {
-        # both exist, but different
-        # XXX: merge them
-        debug { "WARNING: Two different users\n" };
-        return $bycpanid;
-    }
-    elsif ( $byemail->id ) {
-        # there is already user with that address, but different CPANID
-        my ($new, $msg) = $self->create_user( $cpanid, $realname );
-        return ($new, $msg) unless $new;
+    return undef if !$bycpanid->id && !$byemail->id;
 
-        if ( $new->can('MergeInto') ) {
-            debug { "Merging user @{[$new->Name]} into @{[$byemail->Name]}...\n" };
-            $new->MergeInto( $byemail );
-        } else {
-            debug {
-                "WARNING: Couldn't merge user @{[$new->Name]} into @{[$byemail->Name]}."
-                ." Extension is not installed.\n" };
+    if ( $bycpanid->id && !$byemail->id ) {
+        my $current_email = $bycpanid->EmailAddress;
+        unless ( $current_email ) {
+            my ($status, $msg) = $bycpanid->SetEmailAddress( $cpan_email );
+            $RT::Logger->error("Couldn't set email address: $msg")
+                unless $status;
         }
-        return ($new);
+        elsif ( $current_email =~ /\@cpan\.org$/i ) {
+            # user has fake @cpan.org address, other is impossible
+            my ($status, $msg) = $bycpanid->SetEmailAddress( $cpan_email );
+            $RT::Logger->error("Couldn't set email address: $msg")
+                unless $status;
+        }
+        else {
+            # $current_email ne $cpan_email
+            my ($tmp, $msg) = $self->create_user(
+                $cpan_email, undef, $cpan_email
+            );
+            if ( $tmp ) {
+                my ($status, $msg) = $tmp->MergeInto( $bycpanid );
+                $RT::Logger->error("Couldn't merge users: $msg")
+                    unless $status;
+            } else {
+                $RT::Logger->error("Couldn't create user for merging: $msg");
+            }
+        }
+        return $bycpanid;
     }
+    elsif ( !$bycpanid->id && $byemail->id ) {
+        my ($status, $msg) = $byemail->SetName( $cpanid );
+        $RT::Logger->error("Couldn't set user name (login): $msg" )
+            unless $status;
+        return $byemail;
+    }
+# cases when users by id and email exist
+    elsif ( $bycpanid->id != $byemail->id ) {
+        my $current_email = $bycpanid->EmailAddress;
+        if ( $current_email && $current_email =~ /\@cpan\.org$/i ) {
+            # user has fake @cpan.org address, other is impossible
+            $current_email = undef;
+        }
 
-    return $self->create_user($cpanid, $realname, $email);
+        unless ( $current_email ) {
+            # switch email address from secondary record to primary
+            my ($status, $msg) = $byemail->SetEmailAddress('');
+            $RT::Logger->error("Couldn't set email address: $msg")
+                unless $status;
+            ($status, $msg) = $bycpanid->SetEmailAddress( $cpan_email );
+            $RT::Logger->error("Couldn't set email address: $msg")
+                unless $status;
+        }
+
+        my ($status, $msg) = $byemail->MergeInto( $bycpanid );
+        $RT::Logger->error(
+            "Couldn't merge user #". $byemail->id
+            ." into #". $bycpanid->id .": $msg"
+        ) unless $status;
+        return $bycpanid;
+    }
+    else {
+        # already merged
+        return $bycpanid;
+    }
 }
 
 sub create_user {
