@@ -84,6 +84,10 @@ sub init {
         RT->Config->Set( LogToScreen => 'warning' );
     }
     RT::Init();
+
+    unless ( RT::User->can('MergeInto') ) {
+        die "CPAN2RT needs RT::Extension::MergeUsers to work properly";
+    }
 }
 
 sub sync_files {
