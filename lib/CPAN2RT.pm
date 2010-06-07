@@ -92,7 +92,7 @@ sub init {
 
 sub sync_files {
     my $self = shift;
-    my $mirror = shift || $self->{'mirror'} || 'ftp://ftp.funet.fi/pub/CPAN';
+    my $mirror = shift || $self->{'mirror'} || 'http://cpan.perl.org';
 
     debug { "Syncing files from '$mirror'\n" };
 
