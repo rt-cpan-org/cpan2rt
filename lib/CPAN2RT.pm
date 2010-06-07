@@ -79,9 +79,9 @@ sub init {
     require RT;
     RT::LoadConfig();
     if ( $DEBUG ) {
-        $RT::LogToScreen = 'debug';
+        RT->Config->Set( LogToScreen => 'debug' );
     } else {
-        $RT::LogToScreen = 'warning';
+        RT->Config->Set( LogToScreen => 'warning' );
     }
     RT::Init();
 }
