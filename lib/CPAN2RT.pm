@@ -68,9 +68,11 @@ See options in description of L</new>.
 sub init {
     my $self = shift;
 
-    my $home = ($self->{'home'} ||= $ENV{'RTHOME'} || '/opt/rt3');
-    unshift @INC, File::Spec->catdir( $home, 'lib' );
-    unshift @INC, File::Spec->catdir( $home, 'local', 'lib' );
+    my $home = ($self->{'home'} ||= $ENV{'RTHOME'});
+    if ( $home ) {
+        unshift @INC, File::Spec->catdir( $home, 'lib' );
+        unshift @INC, File::Spec->catdir( $home, 'local', 'lib' );
+    }
 
     $DEBUG = $self->{'debug'};
 
