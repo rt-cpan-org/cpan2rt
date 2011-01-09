@@ -785,6 +785,25 @@ sub load_or_create_version_cf {
     return ($cf);
 }
 
+sub load_or_create_modules_cf {
+    my $self = shift;
+
+    my $cf = RT::Queue->new( $RT::SystemUser )->LoadCustomFieldByIdentifier('Modules');
+    return $cf if $cf && $cf->id;
+
+    $cf = RT::CustomField->new( $RT::SystemUser );
+    my ($status, $msg) = $cf->Create(
+        Name        => 'Modules',
+        Description => 'Modules of the distribution',
+        Type        => 'Freeform',
+        LookupType  => 'RT::Queue',
+    );
+    return (undef, "Couldn't create custom field: $msg") unless $status; 
+    ($status, $msg) = $cf->AddToObject( RT::Queue->new( $cf->CurrentUser ) );
+    return (undef, "Couldn't apply custom field: $msg") unless $status;
+    return ($cf);
+}
+
 sub create_version_cf {
     my $self = shift;
     my ($queue, $name) = @_;
