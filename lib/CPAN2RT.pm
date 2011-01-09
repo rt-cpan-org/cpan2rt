@@ -246,6 +246,37 @@ sub for_mapped_distributions {
     close $fh;
 }
 
+sub for_dist_modules {
+    my $self = shift;
+    my $callback = shift;
+
+    my $file = 'dist_to_module.txt';
+    my $path = $self->file_path( $file );
+    if ( !-e $path || (stat $path)[9] != (stat $self->file_path('02packages.details.txt'))[9] ) {
+        open my $fh, "|-", 'sort', '-u', '>', $path
+            or die "Couldn't open sorter: $!";
+        $self->for_mapped_distributions( sub {
+            return unless my $dinfo = $self->file2distinfo('authors/id/'. $_[2]);
+            print $fh $dinfo->dist .' '. $_[0]
+        } );
+        close $fh;
+    }
+
+    my ($dist, @modules) = ( '', () );
+    open my $fh, "<:utf8", $path or die "Couldn't open '$path': $!";
+    while ( my $str = <$fh> ) {
+        my ($d, $m) = split /\s+/, $str;
+        if ( $d eq $dist ) {
+            push @modules, $m;
+            next;
+        }
+
+        $callback->( $dist, @modules );
+        ($dist, @modules) = ($d, $m);
+    }
+    $callback->( $dist, @modules );
+}
+
 sub for_all_distributions {
     my $self = shift;
     my $callback = shift;
