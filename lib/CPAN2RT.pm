@@ -356,6 +356,51 @@ sub sync_distributions {
     return (1);
 }
 
+sub sync_modules {
+    my $self = shift;
+    my $force = shift;
+    if ( !$force && !$self->is_new_file( '02packages.details.txt' ) ) {
+        debug { "Skip syncing, file's not changed\n" };
+        return (1);
+    }
+
+
+    my ($cf, $msg) = $self->load_or_create_modules_cf;
+    return (undef, $msg) unless $cf;
+
+    my @errors;
+    $self->for_dist_modules( sub {
+        my $dist = shift;
+        my @modules = @_;
+
+        my ($queue, @msg) = $self->load_or_create_queue( $dist );
+        unless ( $queue ) {
+            push @errors, @msg;
+            return;
+        }
+
+        my @current = map $_->Content, @{ $queue->CustomFieldValues( $cf )->ItemsArrayRef };
+
+        my $set = List::Compare->new( '--unsorted', \@current, \@modules );
+        foreach ( $set->get_unique ) {
+            debug { "Going to delete $_ from modules list of ". $queue->Name };
+            my ($status, @msg) = $queue->DeleteCustomFieldValue(
+                Field => $cf, Value => $_
+            );
+            push @errors, @msg unless $status;
+        }
+        foreach ( $set->get_complement ) {
+            debug { "Going to add $_ to modules list of ". $queue->Name };
+            my ($status, @msg) = $queue->AddCustomFieldValue(
+                Field => $cf, Value => $_
+            );
+            push @errors, @msg unless $status;
+        }
+
+        DBIx::SearchBuilder::Record::Cachable->FlushCache unless ++$i % 100;
+    } );
+}
+
 sub sync_versions {
     my $self = shift;
     my $force = shift;
