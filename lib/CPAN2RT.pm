@@ -304,7 +304,7 @@ sub sync_distributions {
     my @errors;
 
     my $last = ''; my $i = 0;
-    my $syncer = sub {
+    $self->for_mapped_distributions( sub {
         my $file = $_[2];
         return if $last eq $file;
 
@@ -319,8 +319,7 @@ sub sync_distributions {
         # we don't sync version here as sync_versions does this better
 
         DBIx::SearchBuilder::Record::Cachable->FlushCache unless ++$i % 100;
-    };
-    $self->for_mapped_distributions( $syncer );
+    } );
 
     return (undef, @errors) if @errors;
     return (1);
