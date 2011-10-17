@@ -276,7 +276,7 @@ sub for_all_distributions {
 sub sync_authors {
     my $self = shift;
     my $force = shift;
-    if ( !$force && !$self->is_new_file( '01mailrc.txt' ) ) {
+    if ( !$force && !$self->is_new_file( '00whois.xml' ) ) {
         debug { "Skip syncing, file's not changed\n" };
         return (1);
     }
