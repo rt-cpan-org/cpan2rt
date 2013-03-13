@@ -81,7 +81,7 @@ $commands{ $command }->();
 sub cmd_update {
     my %opt = ( sync => 1, force => 0, debug => 0, skip => [] );
     GetOptions( \%opt, 'sync!', 'force!', 'debug!', 'home=s', 'datadir=s', 'mirror=s', 'skip=s@' );
-    $opt{'skip'} = { map $_ => 1, @{$opt{'skip'}} };
+    $opt{'skip'} = { map { $_ => 1 } @{$opt{'skip'}} };
     my $importer = CPAN2RT->new( %opt );
 
     $importer->sync_files( $opt{'mirror'} ) if $opt{'sync'};
