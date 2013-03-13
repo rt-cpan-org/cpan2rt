@@ -155,9 +155,11 @@ sub fetch_bugtracker {
 
     require ElasticSearch;
     my $es = ElasticSearch->new(
-        servers => 'api.metacpan.org',
-        no_refresh => 1,
+        servers     => 'api.metacpan.org',
+        no_refresh  => 1,
+        transport   => 'http',
     );
+    $es->transport->client->agent(join "/", __PACKAGE__, $VERSION);
 
     # Ian Norton wrote:
     # > Thomas Sibley wrote:
