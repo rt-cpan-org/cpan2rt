@@ -430,11 +430,14 @@ sub _sync_bugtracker_cpan2rt {
                     if(defined($attr->{$method}) && $attr->{$method} ne $bugtracker->{$method}) {
                         debug { "Changing DistributionBugtracker for $dist from '" . $attr->{$method} . "' to '" . $bugtracker->{$method} . "'\n" };
                         $update = 1;
+                    } else {
+                        debug { "Bugtracker $method for $dist is the same.  Skipping.\n" };
                     }
                 }
 
                 else {
                     # Hmm, something odd happened.  Data in the db is wrong, fix it.
+                    debug { "Bugtracker data in database looks corrupt?  Updating." };
                     $update = 1;
                 }
             }
