@@ -159,6 +159,17 @@ sub fetch_bugtracker {
         no_refresh => 1,
     );
 
+    # Ian Norton wrote:
+    # > Thomas Sibley wrote:
+    # >> 2) Is it feasible to further limit returned [MetaCPAN] results to those where
+    # >> .web or .mailto lacks "rt.cpan.org"?
+    # > 
+    # > Spoke to the metacpan guys on irc and seemingly it would be expensive to
+    # > do this server side.  Request submitted to have the fields added as full
+    # > text searchable - https://github.com/CPAN-API/cpan-api/issues/238
+    # > following a chat with clintongormley.  Once that's done then we can
+    # > improve this.
+
     # Pull the details of distribution bugtrackers
     my $scroller = $es->scrolled_search(
         query       => { match_all => {} },
