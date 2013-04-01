@@ -593,7 +593,10 @@ sub load_or_create_user {
     elsif ( $bycpanid->id && $byemail->id ) {
         # both exist, but different
         # XXX: merge them
-        debug { "WARNING: Two different users\n" };
+        debug {
+            sprintf "WARNING: Two RT users for the same PAUSE author: %s (%d) and %s (%d)\n",
+                    $bycpanid->Name, $bycpanid->id, $byemail->EmailAddress, $byemail->id
+        };
         return $bycpanid;
     }
     elsif ( $byemail->id ) {
