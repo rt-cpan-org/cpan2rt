@@ -144,85 +144,6 @@ sub fetch_file {
     return 1;
 }
 
-=head2 fetch_bugtracker
-
-Retrieve bugtracker information from the meta CPAN API.
-
-=cut
-
-sub fetch_bugtracker {
-    my $self = shift;
-
-    require ElasticSearch;
-    my $es = ElasticSearch->new(
-        servers     => 'api.metacpan.org',
-        no_refresh  => 1,
-        transport   => 'http',
-    );
-    $es->transport->client->agent(join "/", __PACKAGE__, $VERSION);
-
-    # Ian Norton wrote:
-    # > Thomas Sibley wrote:
-    # >> 2) Is it feasible to further limit returned [MetaCPAN] results to those where
-    # >> .web or .mailto lacks "rt.cpan.org"?
-    # > 
-    # > Spoke to the metacpan guys on irc and seemingly it would be expensive to
-    # > do this server side.  Request submitted to have the fields added as full
-    # > text searchable - https://github.com/CPAN-API/cpan-api/issues/238
-    # > following a chat with clintongormley.  Once that's done then we can
-    # > improve this.
-
-    # Pull the details of distribution bugtrackers
-    my $scroller = $es->scrolled_search(
-        query       => { match_all => {} },
-        size        => 100,
-        search_type => 'scan',
-        scroll      => '5m',
-        index       => 'v0',
-        type        => 'release',
-        fields  => [ "distribution" , "resources.bugtracker" ],
-        filter  => {
-            and => [{
-                or => [
-                    { exists => { field => "resources.bugtracker.mailto" }},
-                    { exists => { field => "resources.bugtracker.web" }},
-                ]},
-                { term => { "release.status"   => "latest" }},
-                { term => { "release.maturity" => "released" }},
-            ],
-        },
-    );
-
-    unless ( defined($scroller) ) {
-        die("Request to api.metacpan.org failed.\n");
-    }
-
-    debug { "Fetched data from api.metacpan.org\n" };
-
-    my $data = {};
-
-    # Iterate the results from MetaCPAN
-    while ( my $result = $scroller->next ) {
-
-        # Record data
-        my $distribution = $result->{"fields"}->{"distribution"};
-        my $mailto       = $result->{"fields"}->{"resources.bugtracker"}->{"mailto"};
-        my $web          = $result->{"fields"}->{"resources.bugtracker"}->{"web"};
-
-        # Email based alternative - we don't care if this is rt.cpan.org
-        if(defined($mailto) && !($mailto =~ m/rt\.cpan\.org/)) {
-            $data->{$distribution}->{"mailto"} = $mailto;
-        }
-
-        # Web based alternative - we don't care if this is rt.cpan.org
-        if(defined($web) && !($web =~ m/rt\.cpan\.org/)) {
-            $data->{$distribution}->{"web"} = $web;
-        }
-    }
-
-    return $data;
-}
-
 { my $cache;
 sub authors {
     my $self = shift;
@@ -369,16 +290,11 @@ sub sync_authors {
 sub sync_bugtracker {
     my $self = shift;
 
-    debug { "Fetching alternate bug tracker data\n" };
-
-    my $data = $self->fetch_bugtracker();
-
     debug { "Syncing alternate bug trackers\n" };
 
-    $self->_sync_bugtracker_cpan2rt({ data => $data });
+    my $has_bugtracker = $self->_sync_bugtracker_cpan2rt();
 
-    $self->_sync_bugtracker_rt2cpan({ data => $data });
-
+    $self->_sync_bugtracker_rt2cpan( $has_bugtracker );
 }
 
 =head2 _sync_bugtracker_cpan2rt
@@ -390,21 +306,77 @@ This updates and adds to existing queues.
 
 sub _sync_bugtracker_cpan2rt {
     my $self = shift;
-    my $args = shift;
 
-    my $data = $args->{"data"};
+    require ElasticSearch;
+    my $es = ElasticSearch->new(
+        servers     => 'api.metacpan.org',
+        no_refresh  => 1,
+        transport   => 'http',
+    );
+    $es->transport->client->agent(join "/", __PACKAGE__, $VERSION);
 
-    # Iterate through the ditributions.
-    foreach my $dist (keys(%{$data})) {
+    # Ian Norton wrote:
+    # > Thomas Sibley wrote:
+    # >> 2) Is it feasible to further limit returned [MetaCPAN] results to those where
+    # >> .web or .mailto lacks "rt.cpan.org"?
+    # > 
+    # > Spoke to the metacpan guys on irc and seemingly it would be expensive to
+    # > do this server side.  Request submitted to have the fields added as full
+    # > text searchable - https://github.com/CPAN-API/cpan-api/issues/238
+    # > following a chat with clintongormley.  Once that's done then we can
+    # > improve this.
+
+    # Pull the details of distribution bugtrackers
+    my $scroller = $es->scrolled_search(
+        query       => { match_all => {} },
+        size        => 100,
+        search_type => 'scan',
+        scroll      => '5m', # XXX TODO: check that 5m is a long enough time!
+        index       => 'v0',
+        type        => 'release',
+        fields  => [ "distribution" , "resources.bugtracker" ],
+        filter  => {
+            and => [{
+                or => [
+                    { exists => { field => "resources.bugtracker.mailto" }},
+                    { exists => { field => "resources.bugtracker.web" }},
+                ]},
+                { term => { "release.status"   => "latest" }},
+                { term => { "release.maturity" => "released" }},
+            ],
+        },
+    );
+
+    unless ( defined($scroller) ) {
+        die("Request to api.metacpan.org failed.\n");
+    }
+
+    debug { "Requested data from api.metacpan.org\n" };
+
+    my @has_bugtracker;
+
+    # Iterate the results from MetaCPAN
+    while ( my $result = $scroller->next ) {
         my $bugtracker = {};
 
-        # Build the text to set in the queue attribute.
-        foreach my $method (keys(%{$data->{$dist}})) {
-            my $uri = $data->{$dist}->{$method};
+        # Record data
+        my $dist   = $result->{"fields"}->{"distribution"};
+        my $mailto = $result->{"fields"}->{"resources.bugtracker"}->{"mailto"};
+        my $web    = $result->{"fields"}->{"resources.bugtracker"}->{"web"};
 
-            if( $method eq "mailto" || $method eq "web" ) {
-                $bugtracker->{$method} = $uri;
-            }
+        # Email based alternative - we don't care if this is rt.cpan.org
+        if(defined($mailto) && !($mailto =~ m/rt\.cpan\.org/)) {
+            $bugtracker->{"mailto"} = $mailto;
+        }
+
+        # Web based alternative - we don't care if this is rt.cpan.org
+        if(defined($web) && !($web =~ m/rt\.cpan\.org/)) {
+            $bugtracker->{"web"} = $web;
+        }
+
+        unless (keys %$bugtracker) {
+            debug { "Got '$dist' from metacpan, but no alternate bugtracker found" };
+            next;
         }
 
         # Fetch the queue
@@ -413,6 +385,8 @@ sub _sync_bugtracker_cpan2rt {
             debug { "No queue for dist '$dist'" };
             next;
         }
+
+        push @has_bugtracker, $queue->id;
 
         # Get the existing bugtracker from the queue and log if it's changing
         my $attr = $queue->DistributionBugtracker();
@@ -457,7 +431,7 @@ sub _sync_bugtracker_cpan2rt {
         }
     }
 
-    return 1;
+    return \@has_bugtracker;
 }
 
 =head2 _sync_bugtracker_rt2cpan
@@ -469,13 +443,17 @@ This deletes records that are no longer needed or missing in the source.
 
 sub _sync_bugtracker_rt2cpan {
     my $self = shift;
-    my $args = shift;
-
-    my $data = $args->{"data"};
+    my $has_bugtracker = shift;
     my $name = "DistributionBugtracker";
 
     # Find queues with a DistributionBugtracker attribute
     my $queues = RT::Queues->new( $RT::SystemUser );
+    $queues->Limit(
+        FIELD       => 'id',
+        OPERATOR    => 'NOT IN',
+        VALUE       => $has_bugtracker,
+    );
+
     my $attributes = $queues->Join(
         ALIAS1 => 'main',
         FIELD1 => 'id',
@@ -495,14 +473,9 @@ sub _sync_bugtracker_rt2cpan {
 
     # Iterate over queues from RT
     while(my $queue = $queues->Next()) {
-
-       my $dist = $queue->Name();
-
-       # Check that the source defines this queue as having an external tracker
-       unless(defined($data->{$dist})) {
-            # Delete the attribute, it's no longer needed.
-            $queue->DeleteAttribute( $name );
-       }
+        # Delete the attribute, it's no longer needed.
+        debug { "Deleting alternate bugtracker attribute for " . $queue->Name };
+        $queue->DeleteAttribute( $name );
     }
 }
 
