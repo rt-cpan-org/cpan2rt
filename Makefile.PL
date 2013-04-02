@@ -15,6 +15,7 @@ requires        'LWP::UserAgent';
 requires        'HTTP::Date';
 requires        'File::Spec';
 requires        'XML::SAX';
+requires        'ElasticSearch';    # For querying MetaCPAN
 
 auto_install();
 WriteAll();

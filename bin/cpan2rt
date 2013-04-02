@@ -89,6 +89,7 @@ sub cmd_update {
     $importer->sync_distributions( $opt{'force'} ) unless $opt{'skip'}{'distributions'};
     $importer->sync_versions( $opt{'force'} ) unless $opt{'skip'}{'versions'};
     $importer->sync_maintainers( $opt{'force'} ) unless $opt{'skip'}{'maintainers'};
+    $importer->sync_bugtracker( $opt{'force'} ) unless $opt{'skip'}{'bugtrackers'};
 }
 
 sub usage {
