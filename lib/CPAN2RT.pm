@@ -334,15 +334,24 @@ sub _sync_bugtracker_cpan2rt {
         query       => { match_all => {} },
         size        => 100,
         search_type => 'scan',
-        scroll      => '5m', # XXX TODO: check that 5m is a long enough time!
+        scroll      => '5m',
         index       => 'v0',
         type        => 'release',
         fields  => [ "distribution" , "resources.bugtracker" ],
         filter  => {
             and => [{
                 or => [
-                    { exists => { field => "resources.bugtracker.mailto" }},
-                    { exists => { field => "resources.bugtracker.web" }},
+                    {
+                        and => [
+                            { exists => { field => "resources.bugtracker.mailto" }},
+                            { not    => { query => { wildcard => { "resources.bugtracker.mailto" => '*rt.cpan.org*' }}}},
+                        ],
+                    },{
+                        and => [
+                            { exists => { field => "resources.bugtracker.web" }},
+                            { not    => { query => { wildcard => { "resources.bugtracker.web" => '*://rt.cpan.org*' }}}},
+                        ],
+                    }
                 ]},
                 { term => { "release.status"   => "latest" }},
                 { term => { "release.maturity" => "released" }},
