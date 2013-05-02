@@ -807,7 +807,12 @@ sub load_or_create_user {
 
         if ( $new->can('MergeInto') ) {
             debug { "Merging user @{[$new->Name]} into @{[$byemail->Name]}...\n" };
-            $new->MergeInto( $byemail );
+            my ($ok, $msg) = $new->MergeInto( $byemail );
+            if ($ok) {
+                $byemail->SetPrivileged(1);
+            } else {
+                debug { "Couldn't merge user @{[$new->id]} into @{[$byemail->id]}: $msg" };
+            }
         } else {
             debug {
                 "WARNING: Couldn't merge user @{[$new->Name]} into @{[$byemail->Name]}."
