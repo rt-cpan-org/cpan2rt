@@ -372,9 +372,9 @@ sub _sync_bugtracker_cpan2rt {
         my $bugtracker = {};
 
         # Record data
-        my $dist   = $result->{"_source"}->{"distribution"};
-        my $mailto = $result->{"_source"}->{"resources.bugtracker"}->{"mailto"};
-        my $web    = $result->{"_source"}->{"resources.bugtracker"}->{"web"};
+        my $dist   = $result->{"fields"}->{"distribution"};
+        my $mailto = $result->{"fields"}->{"resources.bugtracker"}->{"mailto"};
+        my $web    = $result->{"fields"}->{"resources.bugtracker"}->{"web"};
 
         # Email based alternative - we don't care if this is rt.cpan.org
         if(defined($mailto) && !($mailto =~ m/rt\.cpan\.org/)) {
