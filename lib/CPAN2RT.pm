@@ -68,31 +68,28 @@ See options in description of L</new>.
 sub init {
     my $self = shift;
 
-    my $home = ($self->{'home'} ||= $ENV{'RTHOME'});
-    if ( $home ) {
-        unshift @INC, File::Spec->catdir( $home, 'lib' );
-        unshift @INC, File::Spec->catdir( $home, 'local', 'lib' );
-    }
+    die "datadir ($self->{datadir}) doesn't exist!\n"
+        if $self->{datadir} and not -d $self->{datadir};
+
+    my $home = ($self->{'home'} ||= $ENV{'RTHOME'} || '/opt/rt3');
+    unshift @INC, File::Spec->catdir( $home, 'lib' );
+    unshift @INC, File::Spec->catdir( $home, 'local', 'lib' );
 
     $DEBUG = $self->{'debug'};
 
     require RT;
     RT::LoadConfig();
     if ( $DEBUG ) {
-        RT->Config->Set( LogToScreen => 'debug' );
+        $RT::LogToScreen = 'debug';
     } else {
-        RT->Config->Set( LogToScreen => 'warning' );
+        $RT::LogToScreen = 'warning';
     }
     RT::Init();
-
-    unless ( RT::User->can('MergeInto') ) {
-        die "CPAN2RT needs RT::Extension::MergeUsers to work properly";
-    }
 }
 
 sub sync_files {
     my $self = shift;
-    my $mirror = shift || $self->{'mirror'} || 'http://cpan.perl.org';
+    my $mirror = shift || $self->{'mirror'} || 'ftp://ftp.funet.fi/pub/CPAN';
 
     debug { "Syncing files from '$mirror'\n" };
 
@@ -291,6 +288,214 @@ sub sync_authors {
     }
     return (undef, @errors) if @errors;
     return (1);
+}
+
+sub sync_bugtracker {
+    my $self = shift;
+
+    debug { "Syncing alternate bug trackers\n" };
+
+    my $has_bugtracker = $self->_sync_bugtracker_cpan2rt();
+
+    $self->_sync_bugtracker_rt2cpan( $has_bugtracker );
+}
+
+=head2 _sync_bugtracker_cpan2rt
+
+Sync DistributionBugtracker info from CPAN to RT.
+This updates and adds to existing queues.
+
+=cut
+
+sub _sync_bugtracker_cpan2rt {
+    my $self = shift;
+
+    require ElasticSearch;
+    my $es = ElasticSearch->new(
+        servers     => 'fastapi.metacpan.org',
+        no_refresh  => 1,
+        transport   => 'http',
+    );
+    $es->transport->client->agent(join "/", __PACKAGE__, $VERSION);
+
+    # Ian Norton wrote:
+    # > Thomas Sibley wrote:
+    # >> 2) Is it feasible to further limit returned [MetaCPAN] results to those where
+    # >> .web or .mailto lacks "rt.cpan.org"?
+    # > 
+    # > Spoke to the metacpan guys on irc and seemingly it would be expensive to
+    # > do this server side.  Request submitted to have the fields added as full
+    # > text searchable - https://github.com/CPAN-API/cpan-api/issues/238
+    # > following a chat with clintongormley.  Once that's done then we can
+    # > improve this.
+
+    # Pull the details of distribution bugtrackers
+    my $scroller = $es->scrolled_search(
+        query       => { match_all => {} },
+        size        => 100,
+        search_type => 'scan',
+        scroll      => '5m',
+        index       => 'v1',
+        type        => 'release',
+        fields  => [ "distribution" , "resources.bugtracker" ],
+        filter  => {
+            and => [{
+                or => [
+                    {
+                        and => [
+                            { exists => { field => "resources.bugtracker.mailto" }},
+                            { not    => { query => { wildcard => { "resources.bugtracker.mailto" => '*rt.cpan.org*' }}}},
+                        ],
+                    },{
+                        and => [
+                            { exists => { field => "resources.bugtracker.web" }},
+                            { not    => { query => { wildcard => { "resources.bugtracker.web" => '*://rt.cpan.org*' }}}},
+                        ],
+                    }
+                ]},
+                { term => { "release.status"   => "latest" }},
+                { term => { "release.maturity" => "released" }},
+            ],
+        },
+    );
+
+    unless ( defined($scroller) ) {
+        die("Request to api.metacpan.org failed.\n");
+    }
+
+    debug { "Requested data from api.metacpan.org\n" };
+
+    my @has_bugtracker;
+
+    # Iterate the results from MetaCPAN
+    while ( my $result = $scroller->next ) {
+        my $bugtracker = {};
+
+        # Record data
+        my $dist   = $result->{"fields"}->{"distribution"};
+        my $mailto = $result->{"fields"}->{"resources.bugtracker"}->{"mailto"};
+        my $web    = $result->{"fields"}->{"resources.bugtracker"}->{"web"};
+
+        if (!$dist) {
+            #debug { "Result without distribution: " . Data::Dumper::Dumper($result) };
+            next;
+        }
+
+        debug { "Got '$dist' ($mailto, $web)" };
+
+        # Email based alternative - we don't care if this is rt.cpan.org
+        if(defined($mailto) && !($mailto =~ m/rt\.cpan\.org/)) {
+            $bugtracker->{"mailto"} = $mailto;
+        }
+
+        # Web based alternative - we don't care if this is rt.cpan.org
+        if(defined($web) && !($web =~ m/rt\.cpan\.org/)) {
+            $bugtracker->{"web"} = $web;
+        }
+
+        unless (keys %$bugtracker) {
+            debug { "Got '$dist' from metacpan, but no alternate bugtracker found" };
+            next;
+        }
+
+        # Fetch the queue
+        my $queue = $self->load_queue( $dist );
+        unless( $queue ) {
+            debug { "No queue for dist '$dist'" };
+            next;
+        }
+
+        push @has_bugtracker, $queue->id;
+
+        # Get the existing bugtracker from the queue and log if it's changing
+        my $attr = $queue->DistributionBugtracker();
+
+        # Set this if we need to update when we're done
+        my $update = 0;
+
+        # If the attr is defined, then check it hasn't changed.
+        if(defined($attr)) {
+
+            debug { "Bugtracker set for distribution '$dist'.  Has it changed?\n" };
+
+            foreach my $method (keys(%{$bugtracker})) {
+
+                if(ref($attr) eq "HASH") {
+                    # If this method has changed, log it
+                    if(defined($attr->{$method}) && $attr->{$method} ne $bugtracker->{$method}) {
+                        debug { "Changing DistributionBugtracker for $dist from '" . $attr->{$method} . "' to '" . $bugtracker->{$method} . "'\n" };
+                        $update = 1;
+                    } else {
+                        debug { "Bugtracker $method for $dist is the same.  Skipping.\n" };
+                    }
+                }
+
+                else {
+                    # Hmm, something odd happened.  Data in the db is wrong, fix it.
+                    debug { "Bugtracker data in database looks corrupt?  Updating." };
+                    $update = 1;
+                }
+            }
+        }
+
+        else {
+            debug { "Setting DistributionBugtracker for $dist from nothing\n" };
+            $update = 1;
+        }
+
+
+        if($update) {
+            # Set the queue bugtracker
+            $queue->SetDistributionBugtracker( $bugtracker );
+        }
+    }
+
+    return \@has_bugtracker;
+}
+
+=head2 _sync_bugtracker_rt2cpan
+
+Sync DistributionBugtracker info from RT to CPAN.
+This deletes records that are no longer needed or missing in the source.
+
+=cut
+
+sub _sync_bugtracker_rt2cpan {
+    my $self = shift;
+    my $has_bugtracker = shift;
+    my $name = "DistributionBugtracker";
+
+    # Find queues with a DistributionBugtracker attribute
+    my $queues = RT::Queues->new( $RT::SystemUser );
+    $queues->Limit(
+        FIELD       => 'id',
+        OPERATOR    => 'NOT IN',
+        VALUE       => $has_bugtracker,
+    );
+
+    my $attributes = $queues->Join(
+        ALIAS1 => 'main',
+        FIELD1 => 'id',
+        TABLE2 => 'Attributes',
+        FIELD2 => 'ObjectId',
+    );
+    $queues->Limit(
+        ALIAS   => $attributes,
+        FIELD   => "ObjectType",
+        VALUE   => "RT::Queue",
+    );
+    $queues->Limit(
+        ALIAS   => $attributes,
+        FIELD   => "Name",
+        VALUE   => $name,
+    );
+
+    # Iterate over queues from RT
+    while(my $queue = $queues->Next()) {
+        # Delete the attribute, it's no longer needed.
+        debug { "Deleting alternate bugtracker attribute for " . $queue->Name };
+        $queue->DeleteAttribute( $name );
+    }
 }
 
 sub sync_distributions {
@@ -569,114 +774,61 @@ sub add_versions {
 
 sub load_or_create_user {
     my $self = shift;
-    my ($cpanid, $realname, $public_email) = @_;
-
-    my $user = $self->load_and_fix_user( $cpanid, $public_email);
-    if ( $user ) {
-        if ( $realname && $realname ne ($user->RealName||'') ) {
-            my ($status, $msg) = $user->SetRealName( $realname );
-            $RT::Logger->warning("Couldn't set ${cpanid}'s real name: $msg")
-                unless $status;
-        }
-
-        return $user;
-    }
-    return $self->create_user($cpanid, $realname, $cpanid .'@cpan.org');
-}
-
-sub load_and_fix_user {
-    my $self = shift;
-    my ($cpanid, $public_email) = @_;
-
-    # WARNING: We can not trust public email addresses people publish
-    # on PAUSE. They are not validated in any way! That's it.
-
-    my $cpan_email = $cpanid .'@cpan.org';
-
-    # quick test for case when Name and Email are cosher in one record
-    {
-        my $tmp = RT::User->new( $RT::SystemUser );
-        $tmp->LoadByCols( Name => $cpanid, EmailAddress => $cpan_email );
-        if ( $tmp->id ) {
-            $RT::Logger->debug(
-                "User record with name '$cpanid'"
-                ." and email '$cpan_email' exists."
-            );
-            return $tmp;
-        }
-    }
+    my ($cpanid, $realname, $email) = @_;
 
     my $bycpanid = RT::User->new($RT::SystemUser);
-    $bycpanid->LoadByCols( Name => $cpanid );
+    $bycpanid->LoadByCol( Name => $cpanid );
 
+    # WARNING: when MergeUser extension is used then the same user records
+    # will be loaded even when there are multiple records in the DB
+    $email = $self->parse_email_address( $email ) || "$cpanid\@cpan.org";
     my $byemail = RT::User->new( $RT::SystemUser );
-    $byemail->LoadByEmail( $cpan_email );
+    $byemail->LoadByEmail( $email );
 
-    return undef if !$bycpanid->id && !$byemail->id;
+    if ( $bycpanid->id && (($byemail->id && $bycpanid->id == $byemail->id) || !$byemail->id) ) {
+        # the same users, both cpanid and email...
+        # or email change, so no user with new email...
+        #
+        # XXX: as we have no way to detect email changes on PAUSE
+        # then we set email to the public version from PAUSE only when
+        # user in RT has no email. The same applies to name.
+        $bycpanid->SetEmailAddress( $email )
+            unless $bycpanid->EmailAddress;
+        $bycpanid->SetRealName( $realname )
+            unless $bycpanid->RealName;
+        return $bycpanid;
+    }
+    elsif ( $bycpanid->id && $byemail->id ) {
+        # both exist, but different
+        # XXX: merge them
+        debug {
+            sprintf "WARNING: Two RT users for the same PAUSE author: %s (%d) and %s (%d)\n",
+                    $bycpanid->Name, $bycpanid->id, $byemail->EmailAddress, $byemail->id
+        };
+        return $bycpanid;
+    }
+    elsif ( $byemail->id ) {
+        # there is already user with that address, but different CPANID
+        my ($new, $msg) = $self->create_user( $cpanid, $realname );
+        return ($new, $msg) unless $new;
 
-    if ( $bycpanid->id && !$byemail->id ) {
-        my $current_email = $bycpanid->EmailAddress;
-        unless ( $current_email ) {
-            my ($status, $msg) = $bycpanid->SetEmailAddress( $cpan_email );
-            $RT::Logger->error("Couldn't set email address: $msg")
-                unless $status;
-        }
-        elsif ( $current_email =~ /\@cpan\.org$/i ) {
-            # user has fake @cpan.org address, other is impossible
-            my ($status, $msg) = $bycpanid->SetEmailAddress( $cpan_email );
-            $RT::Logger->error("Couldn't set email address: $msg")
-                unless $status;
-        }
-        else {
-            # $current_email ne $cpan_email
-            my ($tmp, $msg) = $self->create_user(
-                $cpan_email, undef, $cpan_email
-            );
-            if ( $tmp ) {
-                my ($status, $msg) = $tmp->MergeInto( $bycpanid );
-                $RT::Logger->error("Couldn't merge users: $msg")
-                    unless $status;
+        if ( $new->can('MergeInto') ) {
+            debug { "Merging user @{[$new->Name]} into @{[$byemail->Name]}...\n" };
+            my ($ok, $msg) = $new->MergeInto( $byemail );
+            if ($ok) {
+                $byemail->SetPrivileged(1);
             } else {
-                $RT::Logger->error("Couldn't create user for merging: $msg");
+                debug { "Couldn't merge user @{[$new->id]} into @{[$byemail->id]}: $msg" };
             }
+        } else {
+            debug {
+                "WARNING: Couldn't merge user @{[$new->Name]} into @{[$byemail->Name]}."
+                ." Extension is not installed.\n" };
         }
-        return $bycpanid;
+        return ($new);
     }
-    elsif ( !$bycpanid->id && $byemail->id ) {
-        my ($status, $msg) = $byemail->SetName( $cpanid );
-        $RT::Logger->error("Couldn't set user name (login): $msg" )
-            unless $status;
-        return $byemail;
-    }
-# cases when users by id and email exist
-    elsif ( $bycpanid->id != $byemail->id ) {
-        my $current_email = $bycpanid->EmailAddress;
-        if ( $current_email && $current_email =~ /\@cpan\.org$/i ) {
-            # user has fake @cpan.org address, other is impossible
-            $current_email = undef;
-        }
 
-        unless ( $current_email ) {
-            # switch email address from secondary record to primary
-            my ($status, $msg) = $byemail->SetEmailAddress('');
-            $RT::Logger->error("Couldn't set email address: $msg")
-                unless $status;
-            ($status, $msg) = $bycpanid->SetEmailAddress( $cpan_email );
-            $RT::Logger->error("Couldn't set email address: $msg")
-                unless $status;
-        }
-
-        my ($status, $msg) = $byemail->MergeInto( $bycpanid );
-        $RT::Logger->error(
-            "Couldn't merge user #". $byemail->id
-            ." into #". $bycpanid->id .": $msg"
-        ) unless $status;
-        return $bycpanid;
-    }
-    else {
-        # already merged
-        return $bycpanid;
-    }
+    return $self->create_user($cpanid, $realname, $email);
 }
 
 sub create_user {
