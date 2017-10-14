@@ -1,4 +1,7 @@
-#!/usr/bin/perl
+#!/home/rtcpan/perlbrew/perls/perl-5.16.3/bin/perl
+
+eval 'exec /home/rtcpan/perlbrew/perls/perl-5.16.3/bin/perl  -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
 
 =head1 NAME
 
@@ -89,6 +92,7 @@ sub cmd_update {
     $importer->sync_distributions( $opt{'force'} ) unless $opt{'skip'}{'distributions'};
     $importer->sync_versions( $opt{'force'} ) unless $opt{'skip'}{'versions'};
     $importer->sync_maintainers( $opt{'force'} ) unless $opt{'skip'}{'maintainers'};
+    $importer->sync_bugtracker( $opt{'force'} ) unless $opt{'skip'}{'bugtrackers'};
 }
 
 sub usage {
