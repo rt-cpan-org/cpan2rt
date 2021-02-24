@@ -467,12 +467,14 @@ sub _sync_bugtracker_rt2cpan {
 
     # Find queues with a DistributionBugtracker attribute
     my $queues = RT::Queues->new( $RT::SystemUser );
-    $queues->Limit(
-        FIELD       => 'id',
-        OPERATOR    => 'NOT IN',
-        VALUE       => $has_bugtracker,
-    );
-
+    if (scalar(@$has_bugtracker)) {
+	$queues->Limit(
+	    FIELD       => 'id',
+	    OPERATOR    => 'NOT IN',
+	    VALUE       => $has_bugtracker,
+        );
+    }
+    
     my $attributes = $queues->Join(
         ALIAS1 => 'main',
         FIELD1 => 'id',
@@ -1061,7 +1063,7 @@ sub end_element {
 
     if ( $name eq 'cpanid' ) {
         $self->{inside} = 0;
-        my %rec = map Encode::decode_utf8($_), @{ delete $self->{'tmp'} };
+        my %rec = @{ delete $self->{'tmp'} };
         $self->{'res'}{ delete $rec{'id'} } = \%rec;
     }
 }
