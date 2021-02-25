@@ -310,54 +310,10 @@ This updates and adds to existing queues.
 sub _sync_bugtracker_cpan2rt {
     my $self = shift;
 
-    require ElasticSearch;
-    my $es = ElasticSearch->new(
-        servers     => 'fastapi.metacpan.org',
-        no_refresh  => 1,
-        transport   => 'http',
-    );
-    $es->transport->client->agent(join "/", __PACKAGE__, $VERSION);
+    require MetaCPAN::Client;
+    my $mc = MetaCPAN::Client->new;
 
-    # Ian Norton wrote:
-    # > Thomas Sibley wrote:
-    # >> 2) Is it feasible to further limit returned [MetaCPAN] results to those where
-    # >> .web or .mailto lacks "rt.cpan.org"?
-    # > 
-    # > Spoke to the metacpan guys on irc and seemingly it would be expensive to
-    # > do this server side.  Request submitted to have the fields added as full
-    # > text searchable - https://github.com/CPAN-API/cpan-api/issues/238
-    # > following a chat with clintongormley.  Once that's done then we can
-    # > improve this.
-
-    # Pull the details of distribution bugtrackers
-    my $scroller = $es->scrolled_search(
-        query       => { match_all => {} },
-        size        => 100,
-        search_type => 'scan',
-        scroll      => '5m',
-        index       => 'v1',
-        type        => 'release',
-        fields  => [ "distribution" , "resources.bugtracker" ],
-        filter  => {
-            and => [{
-                or => [
-                    {
-                        and => [
-                            { exists => { field => "resources.bugtracker.mailto" }},
-                            { not    => { query => { wildcard => { "resources.bugtracker.mailto" => '*rt.cpan.org*' }}}},
-                        ],
-                    },{
-                        and => [
-                            { exists => { field => "resources.bugtracker.web" }},
-                            { not    => { query => { wildcard => { "resources.bugtracker.web" => '*://rt.cpan.org*' }}}},
-                        ],
-                    }
-                ]},
-                { term => { "release.status"   => "latest" }},
-                { term => { "release.maturity" => "released" }},
-            ],
-        },
-    );
+    my $scroller = $mc->all('releases');
 
     unless ( defined($scroller) ) {
         die("Request to api.metacpan.org failed.\n");
@@ -369,17 +325,29 @@ sub _sync_bugtracker_cpan2rt {
 
     # Iterate the results from MetaCPAN
     while ( my $result = $scroller->next ) {
+        my $data = $result->{data};
+
         my $bugtracker = {};
 
         # Record data
-        my $dist   = $result->{"fields"}->{"distribution"};
-        my $mailto = $result->{"fields"}->{"resources.bugtracker"}->{"mailto"};
-        my $web    = $result->{"fields"}->{"resources.bugtracker"}->{"web"};
+        my $dist   = $data->{distribution};
+        my $mailto;
+        my $web;
+        if ($data->{resources} && $data->{resources}->{bugtracker}) {
+            $mailto = $data->{resources}->{bugtracker}->{mailto};
+            $web = $data->{resources}->{bugtracker}->{web};
+        }
 
         if (!$dist) {
             #debug { "Result without distribution: " . Data::Dumper::Dumper($result) };
             next;
         }
+
+        next unless $data->{maturity};
+        next unless $data->{maturity} eq 'released';
+        next unless $data->{status};
+        next unless $data->{status} eq 'latest';
+
 
         debug { "Got '$dist' ($mailto, $web)" };
 
