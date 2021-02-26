@@ -862,7 +862,12 @@ sub load_or_create_version_cf {
     my ($queue, $name) = @_;
 
     my $cfs = RT::CustomFields->new( $RT::SystemUser );
-    $cfs->Limit( FIELD => 'Name', VALUE => $name );
+
+    # Explicitly specify case-sensitive searches.  Newer versions
+    # of RT::SearchBuilder issue a warning if we don't do that,
+    # so silence the warnings.
+    $cfs->Limit( FIELD => 'Name', VALUE => $name, CASESENSITIVE => 1 );
+
     $cfs->LimitToQueue( $queue->id );
     $cfs->{'find_disabled_rows'} = 0;   # This is why we don't simply do a LoadByName
     $cfs->OrderByCols; # don't sort things
