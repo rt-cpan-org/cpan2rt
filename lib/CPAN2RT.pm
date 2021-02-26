@@ -370,7 +370,8 @@ sub _sync_bugtracker_cpan2rt {
         next unless ($maturity || '') eq 'released';
         next unless ($status   || '') eq 'latest';
 
-        debug { "Got '$dist' ($mailto, $web)" };
+        debug { "Got '$dist' (" . (defined($mailto) ? $mailto : 'undef') .
+                          " ," .  (defined($web)    ? $web :    'undef') . ")" };
 
         # Email based alternative - we don't care if this is rt.cpan.org
         if(defined($mailto) && !($mailto =~ m/rt\.cpan\.org/)) {
