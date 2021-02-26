@@ -313,16 +313,20 @@ sub _sync_bugtracker_cpan2rt {
     require MetaCPAN::Client;
     my $mc = MetaCPAN::Client->new;
 
-    my $scroller = $mc->all('releases',
+    my $resultset = $mc->all('releases',
                             { fields => ['distribution', 'maturity', 'status',
                                          'resources.bugtracker.web',
                                          'resources.bugtracker.mailto']
                             }
                            );
 
-    unless ( defined($scroller) ) {
+    unless ( defined($resultset) ) {
         die("Request to api.metacpan.org failed.\n");
     }
+
+    # We are given a MetaCPAN::Client::ResultSet but want the underlying
+    # scroller
+    my $scroller = $resultset->scroller;
 
     debug { "Requested data from api.metacpan.org\n" };
 
