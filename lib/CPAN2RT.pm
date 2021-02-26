@@ -334,19 +334,29 @@ sub _sync_bugtracker_cpan2rt {
 
         my $bugtracker = {};
 
-        # Record data
+        # MetaCPAN sometimes returns a string for each
+        # field, and sometimes an array.  Why?  We have no idea.
+        # But we have to handle it, so if we get back an array,
+        # pull out the first element... all the arrays I have seen
+        # so far have contained only one element.
         my $dist   = $data->{'distribution'};
+        $dist = $dist->[0] if ( (ref($dist) || '') eq 'ARRAY' );
         my $mailto = $data->{'resources.bugtracker.mailto'};
+        $mailto = $mailto->[0] if ( (ref($mailto) || '') eq 'ARRAY' );
         my $web    = $data->{'resources.bugtracker.web'};
+        $web = $web->[0] if ( (ref($web) || '') eq 'ARRAY' );
 
         if (!$dist) {
             #debug { "Result without distribution: " . Data::Dumper::Dumper($result) };
             next;
         }
 
-        next unless ($data->{'maturity'} || '') eq 'released';
-        next unless ($data->{'status'}   || '') eq 'latest';
-
+        my $maturity = $data->{'maturity'};
+        $maturity = $maturity->[0] if ( (ref($maturity) || '') eq 'ARRAY' );
+        my $status = $data->{'status'};
+        $status = $status->[0] if ( (ref($status) || '') eq 'ARRAY' );
+        next unless ($maturity || '') eq 'released';
+        next unless ($status   || '') eq 'latest';
 
         debug { "Got '$dist' ($mailto, $web)" };
 
