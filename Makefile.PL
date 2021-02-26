@@ -1,3 +1,5 @@
+use lib '.';
+
 use inc::Module::Install;
 
 name            'CPAN2RT';
