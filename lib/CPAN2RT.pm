@@ -330,7 +330,15 @@ sub _sync_bugtracker_cpan2rt {
 
     # Iterate the results from MetaCPAN
     while ( my $result = $scroller->next ) {
-        my $data = $result->{fields};
+
+        # Some versions of MetaCPAN::Client return the fields in
+        # {fields}.  Some in {data}.  Why the change?  No idea.
+        my $data;
+        if ($result->{fields}) {
+            $data = $result->{fields};
+        } else  {
+            $data = $result->{data};
+        }
 
         my $bugtracker = {};
 
