@@ -313,7 +313,12 @@ sub _sync_bugtracker_cpan2rt {
     require MetaCPAN::Client;
     my $mc = MetaCPAN::Client->new;
 
-    my $scroller = $mc->all('releases');
+    my $scroller = $mc->all('releases',
+                            { fields => ['distribution', 'maturity', 'status',
+                                         'resources.bugtracker.web',
+                                         'resources.bugtracker.mailto']
+                            }
+                           );
 
     unless ( defined($scroller) ) {
         die("Request to api.metacpan.org failed.\n");
@@ -325,28 +330,22 @@ sub _sync_bugtracker_cpan2rt {
 
     # Iterate the results from MetaCPAN
     while ( my $result = $scroller->next ) {
-        my $data = $result->{data};
+        my $data = $result->{fields};
 
         my $bugtracker = {};
 
         # Record data
-        my $dist   = $data->{distribution};
-        my $mailto;
-        my $web;
-        if ($data->{resources} && $data->{resources}->{bugtracker}) {
-            $mailto = $data->{resources}->{bugtracker}->{mailto};
-            $web = $data->{resources}->{bugtracker}->{web};
-        }
+        my $dist   = $data->{'distribution'};
+        my $mailto = $data->{'resources.bugtracker.mailto'};
+        my $web    = $data->{'resources.bugtracker.web'};
 
         if (!$dist) {
             #debug { "Result without distribution: " . Data::Dumper::Dumper($result) };
             next;
         }
 
-        next unless $data->{maturity};
-        next unless $data->{maturity} eq 'released';
-        next unless $data->{status};
-        next unless $data->{status} eq 'latest';
+        next unless ($data->{'maturity'} || '') eq 'released';
+        next unless ($data->{'status'}   || '') eq 'latest';
 
 
         debug { "Got '$dist' ($mailto, $web)" };
