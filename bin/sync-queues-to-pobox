@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Sync queues over to pobox.com
+#
+# Strategy:
+#
+#   Pull out all queue names
+#      But not those containing spaces or colons or a plus sign,
+#      or the queue named '___Approvals', or any queues whose names end
+#      in a period (our data is pretty messy)
+#
+#   Convert QNAME to a CSV entry of the form:
+#      QNAME,QNAME@rt-cpan-org.hostedrt.com
+#
+#   Feed to /home/admin/git-repos-from-github/pobox-bulk-go/cmd/sync/sync.go
+#      which must be invoked FROM THE DIRECTORY
+#      /home/admin/git-repos-from-github/pobox-bulk-go
+#      for some strange go-ish reason
+
+DIR=/home/admin/git-repos-from-github/pobox-bulk-go
+cd $DIR
+if test "$?" != 0 ; then
+    echo "*** Cannot cd $DIR; bailing out"
+    exit 1
+fi
+
+psql -U admin -h 127.0.0.1 -c "SELECT Name FROM Queues" --tuples-only --no-align rt5 | \
+    egrep -v '[ :+]' | grep -v '^___Approvals$' | grep -v '\.$' | \
+    sed -e 's/\(.*\)/\1,\1@rt-cpan-org.hostedrt.com/' | \
+    /usr/local/go/bin/go run cmd/sync/sync.go --domain rt.cpan.org --timeout 60m0s --delay 0
