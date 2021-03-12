@@ -24,7 +24,7 @@ if test "$?" != 0 ; then
     exit 1
 fi
 
-psql -U admin -h 127.0.0.1 -c "SELECT Name FROM Queues" --tuples-only --no-align rt5 | \
+psql -U admin -h 127.0.0.1 -c "SELECT Name FROM Queues WHERE LENGTH(Name) < 90" --tuples-only --no-align rt5 | \
     egrep -v '[ :+]' | grep -v '^___Approvals$' | grep -v '\.$' | \
     sed -e 's/\(.*\)/\1,\1@rt-cpan-org.hostedrt.com/' | \
     /usr/local/go/bin/go run cmd/sync/sync.go --domain rt.cpan.org --timeout 60m0s --delay 0
