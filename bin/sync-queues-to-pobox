@@ -26,8 +26,8 @@ fi
 
 
 # Maximum pobox alias length is 90 characters.  We prefix with "bug-" which
-# leaves 86 characters for the queue name.
-psql -U admin -h 127.0.0.1 -c "SELECT Name FROM Queues WHERE LENGTH(Name) < 86" --tuples-only --no-align rt5 | \
+# leaves 86 characters and "comment-" which leaves 82.
+psql -U admin -h 127.0.0.1 -c "SELECT Name FROM Queues WHERE LENGTH(Name) < 82" --tuples-only --no-align rt5 | \
     egrep -v '[ :+]' | grep -v '^___Approvals$' | grep -v '\.$' | \
-    sed -e 's/\(.*\)/bug-\1,bug-\1@rt-cpan-org.hostedrt.com/' | \
+    sed -e 's/\(.*\)/bug-\1,bug-\1@rt-cpan-org.hostedrt.com\ncomment-\1,comment-\1@rt-cpan-org.hostedrt.com/' | \
     /usr/local/go/bin/go run cmd/sync/sync.go --domain rt.cpan.org --timeout 60m0s --delay 0
