@@ -728,13 +728,27 @@ sub add_versions {
     my ($queue, @versions) = @_;
     @versions = uniq grep defined && length, @versions;
 
+    my $cfs = $queue->TicketCustomFields;
+    my %cfs;
+
+    while( my $cf = $cfs->Next ) {
+        $cfs{ $cf->Name } = $cf;
+    }
+
     my @errors;
     foreach my $name ( "Broken in", "Fixed in" ) {
-        my ($cf, $msg) = $self->load_or_create_version_cf( $queue, $name );
-        unless ( $cf ) {
-            push @errors, $msg;
-            next;
+        if( not exists $cfs{ $name } ) {
+            my ($cf, $msg) = $self->create_version_cf( $queue, $name );
+            if ( $cf ) {
+                $cfs{ $name } = $cf;
+            }
+            else {
+                push @errors, $msg;
+                next;
+            }
         }
+
+        my $cf = $cfs{ $name };
 
         # Unless it's a new value, don't add it
         my %old = map { $_->Name => 1 } @{ $cf->Values->ItemsArrayRef };
@@ -878,29 +892,6 @@ sub load_or_create_queue {
     }
     debug { "Created queue #". $queue->id ." for dist ". $queue->Name ."\n" };
     return $queue;
-}
-
-sub load_or_create_version_cf {
-    my $self = shift;
-    my ($queue, $name) = @_;
-
-    my $cfs = RT::CustomFields->new( $RT::SystemUser );
-
-    # Explicitly specify case-insensitive searches.  Newer versions
-    # of RT::SearchBuilder issue a warning if we don't do that.
-    $cfs->Limit( FIELD => 'Name', VALUE => $name, CASESENSITIVE => 0 );
-
-    $cfs->LimitToQueue( $queue->id );
-    $cfs->{'find_disabled_rows'} = 0;   # This is why we don't simply do a LoadByName
-    $cfs->OrderByCols; # don't sort things
-    $cfs->RowsPerPage( 1 );
-
-    my $cf = $cfs->First;
-    unless ( $cf && $cf->id ) {
-        return $self->create_version_cf( $queue, $name );
-    }
-
-    return ($cf);
 }
 
 sub create_version_cf {
