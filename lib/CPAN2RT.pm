@@ -24,6 +24,7 @@ use Email::Address;
 use List::Compare;
 use CPAN::DistnameInfo;
 use List::MoreUtils qw(uniq);
+use File::Copy;
 
 our $DEBUG = 0;
 sub debug(&);
@@ -273,9 +274,28 @@ sub for_all_distributions {
 sub sync_authors {
     my $self = shift;
     my $force = shift;
-    if ( !$force && !$self->is_new_file( '00whois.xml' ) ) {
+    if ( !$force && !$self->is_new_file( '00whois.xml' ) && !$self->is_new_file( 'bounce_list' ) ) {
         debug { "Skip syncing, file's not changed\n" };
         return (1);
+    }
+
+    my $bouncefile_path = $self->file_path( 'bounce_list' );
+
+    # is_new_file compares the mtimes of $file and $file.old
+    # the other files have their .old created by backup_file, but
+    # we can't use $self->backup_file here because it moves the current
+    # file, expecting that we'll fetch a new copy from somewhere,
+    # and we don't have new copy to fetch.
+    copy( $bouncefile_path, $bouncefile_path . '.old' );
+
+    # one email per line
+    my $bounce_map = $self->{bounce_map} = {};
+
+    open my $fh, "<:utf8", $bouncefile_path or die "Couldn't open '$bouncefile_path': $!";
+
+    while( my $email = <$fh> ) {
+        chomp $email;
+        $bounce_map->{ $email } = 1;
     }
 
     my ($i, @errors) = (0);
@@ -782,6 +802,8 @@ sub load_or_create_user {
     my $self = shift;
     my ($cpanid, $realname, $email) = @_;
 
+    my $bounce_map = $self->{bounce_map};
+
     my $bycpanid = RT::User->new($RT::SystemUser);
     $bycpanid->LoadByCol( Name => $cpanid );
 
@@ -798,10 +820,19 @@ sub load_or_create_user {
         # XXX: as we have no way to detect email changes on PAUSE
         # then we set email to the public version from PAUSE only when
         # user in RT has no email. The same applies to name.
-        $bycpanid->SetEmailAddress( $email )
-            unless $bycpanid->EmailAddress;
+
+        # don't use email addresses known to bounce, unsetting them on users if they are already set
+        if( exists $bounce_map->{ $email } ) {
+            $byemail->SetEmailAddress( '' ) if $byemail->id;
+        }
+        else {
+            $bycpanid->SetEmailAddress( $email )
+                unless $bycpanid->EmailAddress;
+        }
+
         $bycpanid->SetRealName( $realname )
             unless $bycpanid->RealName;
+
         return $bycpanid;
     }
     elsif ( $bycpanid->id && $byemail->id ) {
