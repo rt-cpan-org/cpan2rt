@@ -826,7 +826,7 @@ sub load_or_create_user {
             $byemail->SetEmailAddress( '' ) if $byemail->id;
         }
         elsif( exists $bounce_map->{ $bycpanid->EmailAddress } ) {
-            $bycpanid->SetEmailAddress( '' ) if $byemail->id;
+            $bycpanid->SetEmailAddress( '' );
         }
 
         $bycpanid->SetEmailAddress( $email )
