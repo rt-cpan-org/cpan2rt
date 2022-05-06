@@ -804,14 +804,25 @@ sub load_or_create_user {
 
     my $bounce_map = $self->{bounce_map};
 
-    my $bycpanid = RT::User->new($RT::SystemUser);
-    $bycpanid->LoadByCol( Name => $cpanid );
-
     # WARNING: when MergeUser extension is used then the same user records
     # will be loaded even when there are multiple records in the DB
     $email = $self->parse_email_address( $email ) || "$cpanid\@cpan.org";
     my $byemail = RT::User->new( $RT::SystemUser );
     $byemail->LoadByEmail( $email );
+
+    if( $byemail->id and exists $bounce_map->{ $email } ) {
+        # unsetting the email address here won't affect the later logic, even in the case
+        # where there's not already a user with $cpanid.  that user will still be created
+        # and then merged with the $byemail user (that now doesn't have an email).
+        $byemail->SetEmailAddress( '' );
+    }
+
+    my $bycpanid = RT::User->new($RT::SystemUser);
+    $bycpanid->LoadByCol( Name => $cpanid );
+
+    if( $bycpanid->id and defined $bycpanid->EmailAddress and exists $bounce_map->{ $bycpanid->EmailAddress } ) {
+        $bycpanid->SetEmailAddress( '' );
+    }
 
     if ( $bycpanid->id && (($byemail->id && $bycpanid->id == $byemail->id) || !$byemail->id) ) {
         # the same users, both cpanid and email...
@@ -821,16 +832,8 @@ sub load_or_create_user {
         # then we set email to the public version from PAUSE only when
         # user in RT has no email. The same applies to name.
 
-        # don't use email addresses known to bounce, unsetting them on users if they are already set
-        if( exists $bounce_map->{ $email } ) {
-            $byemail->SetEmailAddress( '' ) if $byemail->id;
-        }
-        elsif( defined $bycpanid->EmailAddress && exists $bounce_map->{ $bycpanid->EmailAddress } ) {
-            $bycpanid->SetEmailAddress( '' );
-        }
-
         $bycpanid->SetEmailAddress( $email )
-            unless $bycpanid->EmailAddress;
+            unless $bycpanid->EmailAddress or exists $bounce_map->{ $email };
 
         $bycpanid->SetRealName( $realname )
             unless $bycpanid->RealName;
@@ -866,6 +869,8 @@ sub load_or_create_user {
         }
         return ($new);
     }
+
+    $email = '' if exists $bounce_map->{ $email };
 
     return $self->create_user($cpanid, $realname, $email);
 }
