@@ -295,7 +295,7 @@ sub sync_authors {
 
     while( my $email = <$fh> ) {
         chomp $email;
-        $bounce_map->{ $email } = 1;
+        $bounce_map->{ lc $email } = 1;
     }
 
     my ($i, @errors) = (0);
@@ -810,7 +810,7 @@ sub load_or_create_user {
     my $byemail = RT::User->new( $RT::SystemUser );
     $byemail->LoadByEmail( $email );
 
-    if( $byemail->id and exists $bounce_map->{ $email } ) {
+    if( $byemail->id and exists $bounce_map->{ lc $email } ) {
         # unsetting the email address here won't affect the later logic, even in the case
         # where there's not already a user with $cpanid.  that user will still be created
         # and then merged with the $byemail user (that now doesn't have an email).
@@ -820,7 +820,7 @@ sub load_or_create_user {
     my $bycpanid = RT::User->new($RT::SystemUser);
     $bycpanid->LoadByCol( Name => $cpanid );
 
-    if( $bycpanid->id and defined $bycpanid->EmailAddress and exists $bounce_map->{ $bycpanid->EmailAddress } ) {
+    if( $bycpanid->id and defined $bycpanid->EmailAddress and exists $bounce_map->{ lc $bycpanid->EmailAddress } ) {
         $bycpanid->SetEmailAddress( '' );
     }
 
@@ -833,7 +833,7 @@ sub load_or_create_user {
         # user in RT has no email. The same applies to name.
 
         $bycpanid->SetEmailAddress( $email )
-            unless $bycpanid->EmailAddress or exists $bounce_map->{ $email };
+            unless $bycpanid->EmailAddress or exists $bounce_map->{ lc $email };
 
         $bycpanid->SetRealName( $realname )
             unless $bycpanid->RealName;
@@ -870,7 +870,7 @@ sub load_or_create_user {
         return ($new);
     }
 
-    $email = '' if exists $bounce_map->{ $email };
+    $email = '' if exists $bounce_map->{ lc $email };
 
     return $self->create_user($cpanid, $realname, $email);
 }
